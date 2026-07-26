@@ -1,0 +1,141 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mae
+      POSTGRES_PASSWORD: mae
+      POSTGRES_DB: mae
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mae"]
+      interval: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mae-api:
+    build:
+      context: ./backend
+    env_file: .env
+    environment:
+      MAE_DATABASE_URL: postgresql+asyncpg://mae:mae@postgres:5432/mae
+      MAE_REDIS_URL: redis://redis:6379/0
+      MAE_SANDBOX_URL: http://mae-sandbox:9000
+    volumes:
+      - mae_outputs:/data/outputs
+      - mae_uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mae-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["arq", "app.workers.worker.WorkerSettings"]
+    env_file: .env
+    environment:
+      MAE_DATABASE_URL: postgresql+asyncpg://mae:mae@postgres:5432/mae
+      MAE_REDIS_URL: redis://redis:6379/0
+      MAE_SANDBOX_URL: http://mae-sandbox:9000
+      MAE_RENDERER_URL: http://mae-renderer:9100
+    volumes:
+      - mae_outputs:/data/outputs
+      - mae_uploads:/data/uploads
+      - mae_workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mae-sandbox:
+        condition: service_healthy
+      mae-renderer:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - default
+      - sandbox_net
+
+  mae-renderer:
+    build:
+      context: ./backend/renderer
+    volumes:
+      - mae_outputs:/data/outputs
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - sandbox_net
+    restart: unless-stopped
+
+  mae-sandbox:
+    build:
+      context: ./backend/sandbox
+    volumes:
+      - mae_workspaces:/workspaces
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - sandbox_net
+    restart: unless-stopped
+
+  mae-web:
+    build:
+      context: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - mae-api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  mae_outputs:
+  mae_uploads:
+  mae_workspaces:
+
+networks:
+  sandbox_net:
+    internal: true
