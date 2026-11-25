@@ -62,6 +62,10 @@ class Message(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    artifact_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
 
 

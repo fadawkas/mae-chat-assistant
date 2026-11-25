@@ -1,10 +1,26 @@
+# Local environment and secrets
 .env
+.env.*
+!.env.example
+
+# Dependencies and generated build files
 __pycache__/
 *.pyc
 node_modules/
 .venv/
 dist/
 .vite/
+*.tsbuildinfo
+
+# Local test output and browser sessions
+.pytest_cache/
+.coverage
+htmlcov/
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# Local agent tooling
 .cline
 .clinerules
 .opencode

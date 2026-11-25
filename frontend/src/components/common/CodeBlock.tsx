@@ -66,7 +66,7 @@ function CodeBlock({
           margin: 0,
           padding: '18px',
           borderRadius: '0 0 10px 10px',
-          background: '#181818',
+          background: 'var(--mae-text)',
           fontSize: '13px',
           lineHeight: '1.7',
           overflowX: 'auto',
@@ -75,6 +75,8 @@ function CodeBlock({
           style: {
             fontFamily:
               '"JetBrains Mono", "Fira Code", Consolas, monospace',
+            background: 'transparent',
+            padding: 0,
           },
         }}
         wrapLongLines={false}

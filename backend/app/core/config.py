@@ -31,8 +31,13 @@ class Settings(BaseSettings):
     upload_dir: str = "/data/uploads"
     max_upload_bytes: int = 10 * 1024 * 1024
     sandbox_url: str = "http://mae-sandbox:9000"
+    code_runner_url: str = "http://mae-code:9200"
+    office_public_url: str = ""
+    office_internal_url: str = "http://mae-office"
+    office_mae_url: str = "http://mae-api:8000"
+    office_jwt_secret: str = ""
     renderer_url: str = "http://mae-renderer:9100"
-    document_agent_model: str = "openai/gpt-4o"
+    document_agent_model: str = "openai/gpt-4o"  # Legacy environment compatibility.
     sandbox_timeout_seconds: int = 90
     document_max_attempts: int = 3
     encryption_key: str = "change-me-in-production"

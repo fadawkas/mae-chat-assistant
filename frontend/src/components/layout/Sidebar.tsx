@@ -1,20 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConversationListItem, JobStatus } from '../../types';
-import { fetchConversations, createConversation, renameConversation, deleteConversation } from '../../api/conversations';
+import { fetchConversations, renameConversation, deleteConversation } from '../../api/conversations';
 import { deleteJob, listJobs } from '../../api/jobs';
 
 interface SidebarProps {
-  view: 'chat' | 'council' | 'research' | 'documents' | 'automation' | 'settings';
+  view: 'chat' | 'documents';
   activeId: string | null;
   onSelect: (id: string) => void;
-  onNewChat: (id: string) => void;
-  onNewCouncil?: () => void;
-  onNewResearch?: () => void;
   onNewDocument?: () => void;
-  onNewAutomation?: () => void;
   refreshKey: number;
-  expanded: boolean;
-  onToggle: () => void;
   onSelectJob?: (jobId: string) => void;
   onViewAllHistory?: () => void;
 }
@@ -64,20 +58,15 @@ export function Sidebar({
   view,
   activeId,
   onSelect,
-  onNewChat,
-  onNewCouncil,
-  onNewResearch,
   onNewDocument,
-  onNewAutomation,
   refreshKey,
-  expanded,
   onSelectJob,
   onViewAllHistory,
 }: SidebarProps) {
   const [convs, setConvs] = useState<ConversationListItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Council / Research past jobs
+  // Document history
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
 
@@ -85,6 +74,7 @@ export function Sidebar({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
 
   // Inline rename state
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -108,7 +98,7 @@ export function Sidebar({
     if (view === 'chat') return;
     setJobsLoading(true);
     try {
-      const result = await listJobs(view === "documents" ? "document" : view, 50);
+      const result = await listJobs('document', 50);
       setJobs(result);
     } catch {
       // silently fail
@@ -124,16 +114,6 @@ export function Sidebar({
   useEffect(() => {
     loadJobs();
   }, [refreshKey, loadJobs]);
-
-  const handleNewChat = async () => {
-    try {
-      const conv = await createConversation();
-      setConvs((prev) => [conv, ...prev]);
-      onNewChat(conv.id);
-    } catch {
-      // silently fail
-    }
-  };
 
   // Start inline rename
   const handleStartRename = useCallback((e: React.MouseEvent, conv: ConversationListItem) => {
@@ -208,82 +188,22 @@ export function Sidebar({
       .includes(searchQuery.trim().toLowerCase());
   });
 
-  const newButtonLabel = view === 'chat' ? 'New chat' : view === 'council' ? 'New council' : view === 'research' ? 'New research' : view === 'documents' ? 'New document' : 'New schedule';
-
-  const handleNewAction = () => {
-    if (view === 'chat') handleNewChat();
-    else if (view === 'council') onNewCouncil?.();
-    else if (view === 'research') onNewResearch?.();
-    else if (view === 'documents') onNewDocument?.();
-    else if (view === 'automation') onNewAutomation?.();
-  };
-
   return (
-    <aside
-      className="border-r border-mae-border glass-sidebar flex flex-col h-screen overflow-hidden transition-all duration-200 ease-in-out"
-      style={{ width: expanded ? 260 : 0, minWidth: expanded ? 260 : 0 }}
-    >
-      {/* Content wrapper — hidden when collapsed to avoid overflow */}
-      <div className={`flex flex-col h-full overflow-hidden ${expanded ? 'opacity-100' : 'opacity-0 pointer-events-none'} transition-opacity duration-150`}>
-        {/* Wordmark header + search button */}
-        <div className="shrink-0 flex items-center justify-between px-4 pt-4 pb-3">
-          <h1 className="text-xl font-semibold tracking-tight text-mae-text leading-tight">Mae</h1>
-
-          <button
-            type="button"
-            onClick={() => {
-              setSearchOpen((value) => !value);
-
-              setTimeout(() => {
-                searchInputRef.current?.focus();
-              }, 0);
-            }}
-            title="Search"
-            aria-label="Search conversations"
-            aria-expanded={searchOpen}
-            className={`flex items-center justify-center w-8 h-8 rounded-[8px]
-              border-none cursor-pointer transition-colors
-              ${
-                searchOpen
-                  ? 'bg-mae-bubble-assistant text-mae-text'
-                  : 'bg-transparent text-mae-muted hover:bg-mae-bubble-assistant hover:text-mae-text'
-              }`}
-          >
-            <svg
-              className="w-[17px] h-[17px]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-            >
-              <circle cx="11" cy="11" r="7" />
-              <path
-                d="m20 20-3.5-3.5"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
-        </div>
-
-        {/* New [mode] button */}
-        <div className="shrink-0 px-3 pb-2">
-          <button
-            onClick={handleNewAction}
-            className="flex items-center gap-2 w-full px-3 py-2 rounded-[8px] border border-mae-border bg-transparent text-mae-text text-sidebar-title cursor-pointer transition-colors hover:bg-mae-bubble-assistant hover:border-mae-accent focus-visible:outline-2 focus-visible:outline-mae-accent focus-visible:outline-offset-1"
-          >
-            <span className="text-base leading-none text-mae-accent">+</span>
-            <span>{newButtonLabel}</span>
-          </button>
-        </div>
-
-        {/* Animated search input */}
-        <div
-          className={`grid shrink-0 transition-all duration-200 ${
-            searchOpen
-              ? 'grid-rows-[1fr] opacity-100 px-3 pb-2'
-              : 'grid-rows-[0fr] opacity-0 px-3'
-          }`}
-        >
+    <div className="flex min-h-0 flex-1 flex-col border-t border-mae-border pt-3">
+      <div className="flex items-center justify-between px-5 pb-1">
+        <h2 className="text-sm font-semibold text-mae-text">{view === 'chat' ? 'Chat history' : 'Document history'}</h2>
+        <button type="button" ref={searchButtonRef} aria-label="Search history" aria-expanded={searchOpen}
+          className="grid size-9 place-items-center rounded-lg text-mae-muted hover:bg-mae-bubble-assistant hover:text-mae-text"
+          onClick={() => {
+            if (searchOpen) setSearchQuery('');
+            setSearchOpen(!searchOpen);
+            if (!searchOpen) requestAnimationFrame(() => searchInputRef.current?.focus());
+          }}>
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+        </button>
+      </div>
+      {view === 'documents' && <button onClick={onNewDocument} className="mx-3 mb-2 rounded-lg px-3 py-2 text-left text-sm text-mae-accent hover:bg-mae-bubble-assistant">New document</button>}
+        {searchOpen && <div className="shrink-0 px-3 pb-2">
           <div className="overflow-hidden">
             <div className="relative">
               <svg
@@ -304,14 +224,18 @@ export function Sidebar({
                 onChange={(event) => setSearchQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') {
+                    event.stopPropagation();
+                    event.preventDefault();
                     setSearchOpen(false);
                     setSearchQuery('');
+                    searchButtonRef.current?.focus();
                   }
                 }}
                 placeholder="Search…"
-                className="w-full pl-9 pr-8 py-2 rounded-[8px] glass-input
+                aria-label="Search history"
+                className="w-full pl-9 pr-8 py-2 rounded-lg bg-mae-bg
                   text-mae-text text-sidebar-title border border-mae-border
-                  placeholder:text-mae-muted/50 outline-none
+                  placeholder:text-mae-muted outline-none
                   focus-visible:border-mae-accent transition-colors"
               />
 
@@ -333,7 +257,7 @@ export function Sidebar({
               )}
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* Scrollable history list */}
         <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2">
@@ -348,10 +272,13 @@ export function Sidebar({
               )}
 
               {!loading && convs.length === 0 && (
-                <div className="px-2 py-6 text-center text-sidebar-meta text-mae-muted leading-relaxed">
-                  No conversations yet.<br />
-                  Start one above.
+                <div className="px-2 py-3 text-sidebar-meta text-mae-muted leading-relaxed">
+                  No chats yet.
                 </div>
+              )}
+
+              {!loading && convs.length > 0 && !filteredConvs.length && (
+                <p className="px-2 py-3 text-sidebar-meta text-mae-muted">No matching chats.</p>
               )}
 
               {groupByDate(filteredConvs).map((group) => (
@@ -361,10 +288,9 @@ export function Sidebar({
                     {group.items.map((c) => (
                       <div
                         key={c.id}
-                        onClick={() => onSelect(c.id)}
-                        className={`group flex items-center justify-between px-3 py-[7px] rounded-[8px] cursor-pointer transition-colors ${
+                        className={`chat-history-row relative flex min-h-11 items-center justify-between rounded-lg px-2 transition-colors ${
                           c.id === activeId
-                            ? 'bg-mae-bubble-assistant text-mae-text'
+                            ? 'bg-mae-bubble-user text-mae-text'
                             : 'text-mae-muted hover:text-mae-text hover:bg-mae-bubble-assistant'
                         }`}
                       >
@@ -379,18 +305,16 @@ export function Sidebar({
                             className="flex-1 min-w-0 px-1 py-0.5 rounded-[4px] bg-mae-surface text-mae-text text-sidebar-title border border-mae-accent outline-none"
                           />
                         ) : (
-                          <span className="text-sidebar-title truncate flex-1 min-w-0">
-                            {c.title.length > 40 ? c.title.slice(0, 40) + '…' : c.title}
-                          </span>
+                          <button onClick={() => onSelect(c.id)} aria-current={c.id === activeId ? 'true' : undefined} className="min-w-0 flex-1 truncate py-1 text-left text-sidebar-title" title={c.title}>{c.title}</button>
                         )}
 
                         {/* Hover actions: rename + delete */}
                         {renamingId !== c.id && (
-                          <div className="hidden group-hover:flex items-center gap-0.5 shrink-0 ml-2">
+                          <div className="chat-history-actions ml-1 flex shrink-0 items-center gap-0.5">
                             <button
                               onClick={e => handleStartRename(e, c)}
-                              className="w-5 h-5 flex items-center justify-center rounded-[4px] text-mae-muted hover:text-mae-text hover:bg-mae-border/50 cursor-pointer bg-transparent border-none"
-                              title="Rename"
+                              className="size-7 flex items-center justify-center rounded-md text-mae-muted hover:text-mae-text hover:bg-mae-border/50 cursor-pointer bg-transparent border-none"
+                              title="Rename" aria-label={`Rename ${c.title}`}
                             >
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -398,8 +322,8 @@ export function Sidebar({
                             </button>
                             <button
                               onClick={e => handleDelete(e, c.id)}
-                              className="w-5 h-5 flex items-center justify-center rounded-[4px] text-mae-muted hover:text-mae-error hover:bg-mae-error-bg/50 cursor-pointer bg-transparent border-none"
-                              title="Delete"
+                              className="size-7 flex items-center justify-center rounded-md text-mae-muted hover:text-mae-error hover:bg-mae-error-bg/50 cursor-pointer bg-transparent border-none"
+                              title="Delete" aria-label={`Delete ${c.title}`}
                             >
                               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -408,10 +332,6 @@ export function Sidebar({
                           </div>
                         )}
 
-                        {/* Active indicator dot */}
-                        {c.id === activeId && (
-                          <span className="w-[6px] h-[6px] rounded-full bg-mae-accent shrink-0 ml-2 group-hover:hidden" />
-                        )}
                       </div>
                     ))}
                   </div>
@@ -444,19 +364,18 @@ export function Sidebar({
                 return (
                   <div
                     key={job.id}
-                    onClick={() => onSelectJob?.(job.id)}
                     className={`group flex items-center justify-between px-3 py-[7px] rounded-[8px] cursor-pointer transition-colors ${
                       job.id === activeId
                         ? 'bg-mae-bubble-assistant text-mae-text'
                         : 'text-mae-muted hover:text-mae-text hover:bg-mae-bubble-assistant'
                     }`}
                    >
-                     <span className="text-sidebar-title truncate flex-1 min-w-0">{truncated || '(untitled)'}</span>
+                     <button onClick={() => onSelectJob?.(job.id)} className="min-w-0 flex-1 truncate py-1 text-left text-sidebar-title" title={displayTitle}>{truncated || '(untitled)'}</button>
                      <button
                        type="button"
                        onClick={event => handleDeleteJob(event, job.id)}
                        aria-label="Delete result"
-                       className="hidden group-hover:flex w-5 h-5 items-center justify-center rounded-[4px] text-mae-muted hover:text-mae-error hover:bg-mae-error-bg/50 border-none bg-transparent"
+                       className="flex w-7 h-7 items-center justify-center rounded-[4px] text-mae-muted hover:text-mae-error hover:bg-mae-error-bg/50 border-none bg-transparent"
                      >
                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 0 0-1 1v3M4 7h16" />
@@ -481,7 +400,6 @@ export function Sidebar({
             </>
           )}
         </div>
-      </div>
-    </aside>
+    </div>
   );
 }

@@ -1,0 +1,10 @@
+html { color-scheme: light dark; }
+body { margin: 0; width: 350px; font: 14px system-ui, sans-serif; }
+main { padding: 16px; }
+h1 { font-size: 18px; margin: 0; }
+label { display: block; margin: 10px 0; }
+[hidden] { display: none !important; }
+input, select { box-sizing: border-box; display: block; width: 100%; margin-top: 4px; }
+input, select, button { font: inherit; padding: 7px; }
+.actions { display: flex; flex-wrap: wrap; gap: 5px; }
+#preview, #status { overflow-wrap: anywhere; }

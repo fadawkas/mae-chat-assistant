@@ -1,0 +1,33 @@
+services:
+  mae-api:
+    environment:
+      MAE_OFFICE_PUBLIC_URL: ${MAE_OFFICE_PUBLIC_URL:-http://localhost:8081}
+      MAE_OFFICE_JWT_SECRET: ${MAE_OFFICE_JWT_SECRET:?Set MAE_OFFICE_JWT_SECRET to at least 32 random characters}
+    networks:
+      - office_net
+
+  mae-office:
+    image: onlyoffice/documentserver:9.3
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${MAE_OFFICE_JWT_SECRET:?Set MAE_OFFICE_JWT_SECRET to at least 32 random characters}
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+    networks:
+      - office_net
+    restart: unless-stopped
+
+  office-proxy:
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - ./frontend/office.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - office_net
+      - office_ingress
+    restart: unless-stopped
+
+networks:
+  office_net:
+    internal: true
+  office_ingress:

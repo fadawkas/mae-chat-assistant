@@ -9,13 +9,13 @@ Mae reads settings from `.env` using the `MAE_` prefix. Start from
 | --- | --- |
 | `MAE_OPENROUTER_API_KEY` | Server-side OpenRouter key |
 | `MAE_OPENROUTER_BASE_URL` | OpenRouter-compatible API URL |
-| `MAE_DEFAULT_MODEL` | Default chat model |
+| `MAE_DEFAULT_MODEL` | Default model for legacy server workflows |
 | `MAE_COUNCIL_MODELS` | Comma-separated default council models |
 | `MAE_SEARCH_API_KEY` | Search provider key for research |
-| `MAE_DOCUMENT_AGENT_MODEL` | Model used for document workflows |
 
 Users may also store an account-specific OpenRouter key. Mae encrypts those
-keys using `MAE_ENCRYPTION_KEY`.
+keys using `MAE_ENCRYPTION_KEY`. Workspace runs use DeepSeek V4.1 Flash 1017 and
+Liquid d1-ultra through the same OpenRouter key.
 
 ## Services and Storage
 
@@ -26,7 +26,8 @@ keys using `MAE_ENCRYPTION_KEY`.
 | `MAE_OUTPUT_DIR` | Generated file directory |
 | `MAE_UPLOAD_DIR` | Uploaded file directory |
 | `MAE_MAX_UPLOAD_BYTES` | Maximum upload size |
-| `MAE_SANDBOX_URL` | Internal sandbox service URL |
+| `MAE_CODE_RUNNER_URL` | Internal workspace code runner URL (default `http://mae-code:9200`) |
+| `MAE_SANDBOX_URL` | Internal legacy document sandbox service URL |
 | `MAE_RENDERER_URL` | Internal renderer service URL |
 | `MAE_SANDBOX_TIMEOUT_SECONDS` | Sandbox execution timeout |
 

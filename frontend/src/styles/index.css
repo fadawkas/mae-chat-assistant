@@ -2,62 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Fonts ─────────────────────────────────────────────────────────────────── */
-
-@font-face {
-  font-family: 'Maitree';
-  src: url('/fonts/Maitree-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Maitree';
-  src: url('/fonts/Maitree-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Maitree';
-  src: url('/fonts/Maitree-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Maitree';
-  src: url('/fonts/Maitree-Bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
 /* ── CSS Variables ─────────────────────────────────────────────────────────── */
 
 :root {
-  --mae-bg: #0d0d0d;
-  --mae-surface: #161616;
-  --mae-border: #2a2a2a;
-  --mae-text: #e8e8e8;
-  --mae-muted: #7a7a7a;
-  --mae-accent: #d8e778;
-  --mae-accent-on: #0d0d0d;
-  --mae-error: #f87171;
-  --mae-error-bg: rgba(248, 113, 113, 0.08);
-  --mae-progress: #60a5fa;
-  --mae-progress-bg: rgba(96, 165, 250, 0.08);
-  --mae-bubble-user: #1a1a1a;
-  --mae-bubble-assistant: #1f1f1f;
+  color-scheme: light;
+  accent-color: var(--mae-accent);
+  caret-color: var(--mae-accent);
+  --mae-bg: theme('colors.mae.bg');
+  --mae-surface: theme('colors.mae.surface');
+  --mae-border: theme('colors.mae.border');
+  --mae-text: theme('colors.mae.text');
+  --mae-muted: theme('colors.mae.muted');
+  --mae-accent: theme('colors.mae.accent');
+  --mae-lime: theme('colors.mae.lime');
+  --mae-error: theme('colors.mae.error');
+  --mae-error-bg: theme('colors.mae.error-bg');
+  --mae-progress: theme('colors.mae.progress');
+  --mae-progress-bg: theme('colors.mae.progress-bg');
+  --mae-bubble-assistant: theme('colors.mae.bubble-assistant');
 }
 
 /* ── Base ──────────────────────────────────────────────────────────────────── */
 
 html {
-  font-family: 'Maitree', system-ui, -apple-system, sans-serif;
+  font-family: system-ui, -apple-system, sans-serif;
   background: var(--mae-bg);
   color: var(--mae-text);
   -webkit-font-smoothing: antialiased;
@@ -89,28 +57,49 @@ body {
   background: var(--mae-muted);
 }
 
-/* ── Glass sidebar ─────────────────────────────────────────────────────────── */
-
-.glass-sidebar {
-  background: rgba(13, 13, 13, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
 /* ── Glass input ───────────────────────────────────────────────────────────── */
 
 .glass-input {
-  background: rgba(22, 22, 22, 0.7);
+  background: var(--mae-surface);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
 
-.auth-shell {
-  background: radial-gradient(circle at 15% 15%, rgba(216, 231, 120, 0.08), transparent 30%), var(--mae-bg);
+:focus-visible {
+  outline: 2px solid var(--mae-accent);
+  outline-offset: 2px;
 }
 
-.auth-intro {
-  background: linear-gradient(145deg, rgba(216, 231, 120, 0.12), transparent 55%), #121212;
+::selection {
+  background: var(--mae-lime);
+  color: var(--mae-text);
+}
+
+.workspace-page {
+  @apply min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-7 lg:px-8;
+}
+
+.workspace-content {
+  @apply mx-auto w-full max-w-4xl;
+}
+
+.workspace-heading {
+  @apply text-3xl font-bold tracking-tight text-mae-text;
+}
+
+/* Touch users get persistent history actions; pointer users get more title space. */
+@media (hover: hover) {
+  .chat-history-actions {
+    @apply pointer-events-none absolute right-1 opacity-0;
+  }
+
+  .chat-history-row:is(:hover, :focus-within) {
+    @apply pr-[4.25rem];
+  }
+
+  .chat-history-row:is(:hover, :focus-within) .chat-history-actions {
+    @apply pointer-events-auto opacity-100;
+  }
 }
 
 .auth-field {
@@ -125,23 +114,20 @@ body {
 .auth-field input {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #3a3a3a;
+  border: 1px solid var(--mae-border);
   border-radius: 10px;
-  background: #101010;
+  background: var(--mae-bg);
   color: var(--mae-text);
   padding: 0.75rem 0.875rem;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.auth-field input::placeholder { color: #777; }
-.auth-field input:hover { border-color: #555; }
-.auth-field input:focus { border-color: var(--mae-accent); box-shadow: 0 0 0 3px rgba(216, 231, 120, 0.12); }
-.auth-primary { transition: filter 0.15s, transform 0.15s; }
-.auth-primary:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
-
+.auth-field input::placeholder { color: var(--mae-muted); }
+.auth-field input:hover { border-color: var(--mae-muted); }
+.auth-field input:focus { border-color: var(--mae-accent); box-shadow: 0 0 0 3px theme('colors.mae.accent-soft'); }
 @media (prefers-reduced-motion: reduce) {
-  .auth-primary, .auth-field input { transition: none; }
+  .auth-field input { transition: none; }
 }
 
 /* ── Animations ────────────────────────────────────────────────────────────── */
@@ -263,7 +249,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 8px 16px;
-  background: #111;
+  background: var(--mae-bubble-assistant);
   border-bottom: 1px solid var(--mae-border);
   font-size: 12px;
   color: var(--mae-muted);
@@ -304,6 +290,9 @@ body {
   margin: 0.5em 0;
   padding-left: 1.5em;
 }
+
+.assistant-message ul { list-style: disc; }
+.assistant-message ol { list-style: decimal; }
 
 .assistant-message li {
   margin: 0.25em 0;

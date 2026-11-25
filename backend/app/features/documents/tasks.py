@@ -1,11 +1,9 @@
 import json
-import asyncio
 import shutil
 import uuid
 import logging
 import hashlib
 from pathlib import Path
-from urllib.parse import quote
 
 import httpx
 import redis.asyncio as aioredis
@@ -20,7 +18,7 @@ from app.core.database import async_session_factory
 from app.features.documents.agent import generate_code
 from app.features.documents.validation import validate
 from app.features.documents.pdf_ops import merge_pdfs, split_pdf
-from app.services.titling import title_job
+from app.services.artifacts import CONTENT_TYPES, artifact_title, describe_artifact
 from app.models import DocumentArtifactRecord, Job
 from app.workers.queue import PROGRESS_CHANNEL
 from app.workers.context import job_owner_and_key, tenant_dir
@@ -80,6 +78,8 @@ async def document_job(ctx: dict, job_id_str: str, payload: dict) -> dict:
         workspace.mkdir(parents=True, exist_ok=True)
         source_text = extract_text(source, payload["format"]) if source else ""
         artifact_path = workspace / f"output.{payload['format']}"
+        extension = payload["format"]
+        title = explicit_title = artifact_title(payload.get("title") or "", extension)
         last_error = None
         validation: list[str] = []
         if payload.get("mode") == "pdf_merge":
@@ -98,7 +98,7 @@ async def document_job(ctx: dict, job_id_str: str, payload: dict) -> dict:
                 async def publish_code(chunk: str) -> None:
                     await redis.publish(PROGRESS_CHANNEL.format(job_id_str), json.dumps({"type":"code","chunk":chunk,"status":"in_progress"}))
                 try:
-                    code = await generate_code(payload["format"], payload.get("title") or "Mae Document", payload["prompt"], source_text, payload.get("model"), publish_code, last_error, payload.get("mode", "create"), api_key)
+                    code, suggested_title = await generate_code(extension, explicit_title, payload["prompt"], source_text, payload.get("model"), publish_code, last_error, payload.get("mode", "create"), api_key)
                     request = {"workspace": workspace_name, "code": code, "output": f"output.{payload['format']}", "timeout": settings.sandbox_timeout_seconds}
                     await redis.publish(PROGRESS_CHANNEL.format(job_id_str), json.dumps({"type":"progress","phase":"executing","message":"Running the document generator..."}))
                     async with httpx.AsyncClient(timeout=settings.sandbox_timeout_seconds + 10) as client:
@@ -109,6 +109,7 @@ async def document_job(ctx: dict, job_id_str: str, payload: dict) -> dict:
                             response.raise_for_status()
                     await redis.publish(PROGRESS_CHANNEL.format(job_id_str), json.dumps({"type":"progress","phase":"validating","message":"Validating the generated file..."}))
                     validation = validate(artifact_path, payload["format"], payload["prompt"])
+                    title = explicit_title or artifact_title(suggested_title or "", extension)
                     break
                 except Exception as exc:
                     last_error = str(exc)[:500] or "Generated document was invalid"
@@ -132,24 +133,25 @@ async def document_job(ctx: dict, job_id_str: str, payload: dict) -> dict:
             preview_source = output / ".renders" / render_data["preview"]
             shutil.copyfile(preview_source, rendered_preview)
             render_data["preview_url"] = f"/api/files/{rendered_preview.name}"
-        title = payload.get("title") or "Mae document"
-        safe_title = "".join(character if character.isalnum() or character in " ._-()" else "_" for character in Path(title).name).strip(" .") or "Mae document"
-        extension = payload["format"]
-        display_name = safe_title if safe_title.lower().endswith(f".{extension}") else f"{safe_title}.{extension}"
-        content_types = {"docx":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","pptx":"application/vnd.openxmlformats-officedocument.presentationml.presentation","xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","pdf":"application/pdf"}
-        artifact = {"filename":filename,"display_name":display_name,"content_type":content_types[payload["format"]],"size":final_path.stat().st_size,"download_url":f"/api/files/{filename}?download_name={quote(display_name)}"}
+        title = title or artifact_title(payload["prompt"], extension) or "Document"
+        display_name = f"{title}.{extension}"
+        content_type = CONTENT_TYPES[extension]
+        record = DocumentArtifactRecord(
+            job_id=job_id, role="output", storage_name=filename, original_name=display_name,
+            content_type=content_type, format=extension, size=final_path.stat().st_size,
+            sha256=hashlib.sha256(final_path.read_bytes()).hexdigest(),
+        )
+        artifact = describe_artifact(record)
         result_payload = {"format":payload["format"],"mode":payload["mode"],"prompt":payload["prompt"],"artifact":artifact,"preview":artifact_preview(final_path, payload["format"]),"render":render_data,"validation":{"format":payload["format"],"checks":validation + render_checks}}
         async with async_session_factory() as db:
             job = (await db.execute(select(Job).where(Job.id == job_id))).scalar_one()
-            job.status = "done"; job.result = result_payload
-            digest = hashlib.sha256(final_path.read_bytes()).hexdigest()
-            db.add(DocumentArtifactRecord(job_id=job_id, role="output", storage_name=filename, original_name=display_name, content_type=content_types[payload["format"]], format=payload["format"], size=final_path.stat().st_size, sha256=digest))
+            job.status = "done"; job.result = result_payload; job.title = title
+            db.add(record)
             db.add(DocumentArtifactRecord(job_id=job_id, role="preview", storage_name=rendered_preview.name, original_name=f"{display_name}.png", content_type="image/png", format=payload["format"], size=rendered_preview.stat().st_size, sha256=hashlib.sha256(rendered_preview.read_bytes()).hexdigest()))
             for source_path in sources:
                 if source_path.is_file():
-                    db.add(DocumentArtifactRecord(job_id=job_id, role="input", storage_name=source_path.name, original_name=source_path.name, content_type=content_types[payload["format"]], format=payload["format"], size=source_path.stat().st_size, sha256=hashlib.sha256(source_path.read_bytes()).hexdigest()))
+                    db.add(DocumentArtifactRecord(job_id=job_id, role="input", storage_name=source_path.name, original_name=source_path.name, content_type=content_type, format=extension, size=source_path.stat().st_size, sha256=hashlib.sha256(source_path.read_bytes()).hexdigest()))
             await db.commit()
-        asyncio.create_task(title_job(job_id, payload["prompt"], "document", api_key=api_key))
         await redis.publish(PROGRESS_CHANNEL.format(job_id_str), json.dumps({"type":"done","result":result_payload,"status":"done"}))
         return result_payload
     except Exception as exc:

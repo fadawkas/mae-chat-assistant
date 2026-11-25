@@ -1,9 +1,10 @@
 from datetime import datetime
 from uuid import UUID
+from typing import Literal
 
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 class SignUpRequest(BaseModel):
     first_name: str
@@ -37,15 +38,11 @@ class ModelOut(BaseModel):
 
 # ── Chat ─────────────────────────────────────────────────────────────────────
 
-class ChatMessage(BaseModel):
-    role: str  # "system" | "user" | "assistant"
-    content: str
-
-
-class ChatRequest(BaseModel):
-    model: str
-    messages: list[ChatMessage]
-    conversation_id: UUID | None = None
+class ChatRunRequest(BaseModel):
+    run_id: UUID
+    conversation_id: UUID
+    content: str = Field(min_length=1, max_length=100_000)
+    use_browser_tab: bool = False
 
 
 # ── Conversation ─────────────────────────────────────────────────────────────
@@ -66,12 +63,35 @@ class ConversationRenameRequest(BaseModel):
     title: str
 
 
+class DocumentArtifact(BaseModel):
+    filename: str
+    display_name: str
+    content_type: str
+    size: int
+    download_url: str
+    download_name: str | None = None
+
+
+class ChatRunSnapshot(BaseModel):
+    id: UUID
+    user_message_id: UUID
+    user_content: str
+    status: Literal["queued", "in_progress", "done", "failed", "cancelled", "interrupted", "incomplete"]
+    content: str
+    progress: str | None
+    error: str | None
+    artifacts: list[DocumentArtifact]
+    browser_state: Literal["waiting", "received"] | None
+
+
 class MessageOut(BaseModel):
     id: UUID
     role: str
     content: str
     model: str | None
     created_at: datetime
+    artifacts: list[DocumentArtifact] = Field(default_factory=list)
+    run_status: str | None = None
 
 
 class ConversationDetail(BaseModel):
@@ -107,6 +127,12 @@ class JobProgressEvent(BaseModel):
     message: str | None = None
     job_id: UUID | None = None
     status: str | None = None
+
+
+class RoutinePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    prompt: str = Field(min_length=1, max_length=20_000)
+    model: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class AutomationScheduleCreate(BaseModel):
@@ -233,12 +259,8 @@ class DocumentMode(StrEnum):
     pdf_split = "pdf_split"
 
 
-class DocumentArtifact(BaseModel):
-    filename: str
-    display_name: str
-    content_type: str
-    size: int
-    download_url: str
+class ArtifactOut(DocumentArtifact):
+    created_at: datetime
 
 
 class DocumentPreview(BaseModel):

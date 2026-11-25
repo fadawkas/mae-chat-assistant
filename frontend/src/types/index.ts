@@ -2,19 +2,22 @@
 
 export interface User { id: string; first_name: string; last_name: string; email: string; has_openrouter_key: boolean }
 
+export type WorkspaceView = 'chat' | 'documents' | 'artifacts' | 'automation' | 'settings';
+
 export interface ChatMessage {
   role: string;
   content: string;
 }
 
 export interface ChatRequest {
-  model: string;
   messages: ChatMessage[];
   conversation_id?: string | null;
 }
 
 export type SSEEvent =
   | { type: 'token'; text: string }
+  | { type: 'progress'; message: string }
+  | { type: 'artifact'; artifact: DocumentArtifact }
   | { type: 'done'; conversation_id?: string | null }
   | { type: 'error'; message: string };
 
@@ -30,6 +33,8 @@ export interface MessageOut {
   content: string;
   model: string | null;
   created_at: string;
+  artifacts?: DocumentArtifact[];
+  run_status?: string | null;
 }
 
 export interface ConversationDetail {
@@ -60,7 +65,7 @@ export interface JobEnqueueResponse {
 }
 
 export interface AutomationSchedule {
-  id: string; name: string; description: string | null; task_type: 'research' | 'council' | 'document';
+  id: string; name: string; description: string | null; task_type: 'agent' | 'research' | 'council' | 'document';
   cron_expression: string; timezone: string; enabled: boolean; payload: Record<string, unknown>;
   last_run_at: string | null; last_job_id: string | null; created_at: string; updated_at: string;
 }
@@ -96,7 +101,8 @@ export type ResearchProgressEvent =
 /** Union of all job progress event types. */
 export type JobProgressEvent = CouncilProgressEvent | ResearchProgressEvent | DocumentProgressEvent;
 
-export interface DocumentArtifact { filename: string; display_name: string; content_type: string; size: number; download_url: string }
+export interface DocumentArtifact { filename: string; display_name: string; content_type: string; size: number; download_url: string; download_name?: string | null }
+export interface Artifact extends DocumentArtifact { created_at: string }
 export interface DocumentPreview { summary: string; text: string }
 export interface DocumentValidation { format: string; checks: string[] }
 export interface DocumentResult { format: string; mode: 'create' | 'edit' | 'pdf_rebuild' | 'pdf_merge' | 'pdf_split'; prompt: string; artifact: DocumentArtifact; preview?: DocumentPreview; render?: { pages: number; preview_url?: string }; validation?: DocumentValidation }

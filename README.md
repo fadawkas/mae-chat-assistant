@@ -1,19 +1,21 @@
 # Mae
 
-Mae is a self-hosted AI workspace. It provides authenticated streaming chat,
-multi-model councils, research jobs, document generation, and scheduled
-automation from one React application.
+Mae is a self-hosted AI workspace. Ask the workspace agent to answer a
+question, compute a result, or create files in chat. Save repeatable prompts as
+**Routines** and find generated files in **Artifacts**.
 
 ## What Is Included
 
 - Account signup, sign-in, sign-out, and session-based authentication
-- Streaming chat through OpenRouter
-- Persistent conversations and message history
-- Configurable AI councils with multiple member models and a judge model
-- Background research jobs using a configured search provider
-- Background document jobs that can produce DOCX, PPTX, PDF, and XLSX files
+- Durable conversations with DeepSeek V4.1 Flash 1017, automatic reasoning effort, and evidence-based completion checks
+- Click-to-dictate drafts and optional read-aloud in supported browsers
+- [Mae Browser Helper](browser-helper/README.md) for sharing a selected table from your own Chromium profile, without a hosted desktop
+- Isolated JavaScript code mode for calculations and file generation
+- Text-to-image generation in chat using Recraft V4.1 Flash V2 and your OpenRouter credits
+- Private Artifacts library for documents, spreadsheets, text files, and generated images
+- Saved Routines using the same agent, with manual and scheduled runs
+- Advanced document tools
 - Job status and progress streaming through Redis pub/sub
-- Scheduled automation with manual run support
 - Per-account OpenRouter key storage encrypted with `MAE_ENCRYPTION_KEY`
 
 ## Runtime Services
@@ -23,16 +25,17 @@ Mae runs as a Docker Compose stack:
 | Service | Role |
 | --- | --- |
 | `mae-web` | React frontend and nginx API proxy on port `8080` |
-| `mae-api` | FastAPI HTTP API and streaming chat endpoint |
-| `mae-worker` | ARQ worker for councils, research, documents, and automation |
+| `mae-api` | FastAPI HTTP API and chat run endpoints |
+| `mae-worker` | ARQ worker for chat, routines, councils, research, and advanced document jobs |
 | `postgres` | Users, conversations, jobs, councils, schedules, and metadata |
 | `redis` | ARQ queue and job progress pub/sub |
-| `mae-renderer` | Isolated document rendering |
-| `mae-sandbox` | Isolated workspace execution |
+| `mae-code` | Isolated JavaScript execution for the workspace agent |
+| `mae-renderer` | Isolated rendering for advanced document jobs |
+| `mae-sandbox` | Isolated execution for legacy document workflows |
 
-Chat stays in the HTTP request and streams its response. Long-running work is
-stored as a job in Postgres, queued through Redis, and processed by
-`mae-worker`.
+Chat runs in `mae-worker`, with its state stored in Postgres and dispatch
+through Redis. You can leave a conversation while Mae works and reopen it to
+see the latest result. Use **Stop** to cancel; closing the tab does not cancel.
 
 ## Run With Docker Compose
 
@@ -40,7 +43,6 @@ stored as a job in Postgres, queued through Redis, and processed by
 
 - Docker Engine with Docker Compose
 - An OpenRouter API key
-- A search API key if research is needed
 
 ### Setup
 
@@ -57,14 +59,20 @@ MAE_OPENROUTER_API_KEY=your-openrouter-key
 MAE_ENCRYPTION_KEY=your-long-random-secret
 ```
 
-Set `MAE_SEARCH_API_KEY` for research. Start Mae with:
+Apply migrations before starting Mae on a new database:
 
 ```bash
+docker compose run --rm --build mae-api alembic upgrade head
 docker compose up --build
 ```
 
 Open [http://localhost:8080](http://localhost:8080), create an account, and
-sign in. The API health endpoint does not require authentication:
+add your OpenRouter key in account settings. Try asking Mae to calculate a
+budget and generate a spreadsheet, or ask it to create an image. Generated images
+appear in chat and in **Artifacts**. Mae generates up to five images per explicit chat
+request; image generation is not available in scheduled Routines.
+
+The API health endpoint does not require authentication:
 
 ```bash
 curl http://localhost:8080/api/health
@@ -94,11 +102,11 @@ Mae data volumes.
 
 ## Database Schema
 
-Alembic migrations are the production schema source of truth. Apply them after
-the API container is running:
+Alembic migrations are the production schema source of truth. Apply them in a
+one-off API container before starting the updated API and worker:
 
 ```bash
-docker compose exec mae-api alembic upgrade head
+docker compose run --rm --build mae-api alembic upgrade head
 ```
 
 The API also creates missing tables during startup for development
@@ -113,7 +121,7 @@ All settings use the `MAE_` prefix and are listed in `.env.example`.
 | --- | --- |
 | `MAE_OPENROUTER_API_KEY` | Default server-side model provider key |
 | `MAE_OPENROUTER_BASE_URL` | OpenRouter-compatible API base URL |
-| `MAE_DEFAULT_MODEL` | Default chat model |
+| `MAE_DEFAULT_MODEL` | Default model for legacy server workflows |
 | `MAE_COUNCIL_MODELS` | Comma-separated default council models |
 | `MAE_SEARCH_API_KEY` | Search provider key for research |
 | `MAE_DATABASE_URL` | Async PostgreSQL connection URL |
@@ -138,13 +146,14 @@ The main API areas are:
 
 - `/api/auth/*`: account and session operations
 - `/api/account/*`: account provider-key operations
-- `/api/chat`: authenticated streaming chat
+- `/api/chat`: submit, observe, and stop authenticated chat runs
 - `/api/conversations/*`: conversation history management
 - `/api/councils/*`: council configuration and council jobs
 - `/api/research`: research job creation
 - `/api/documents`: document job creation
-- `/api/jobs/*`: job status, progress streams, and generated files
-- `/api/automation/*`: schedules and automation runs
+- `/api/jobs/*`: job status and progress streams
+- `/api/artifacts` and `/api/files/*`: private file library and downloads
+- `/api/automation/*`: saved routines, legacy schedules, and background runs
 - `/api/models`: available model information
 
 Mutating authenticated requests use the application's CSRF protection. The
@@ -170,7 +179,8 @@ proxy as defined in `frontend/vite.config.ts`.
 backend/app/       FastAPI routes, services, models, workers, and settings
 backend/alembic/   Database migrations
 backend/renderer/  Isolated document renderer image
-backend/sandbox/   Isolated sandbox image
+backend/sandbox/   Legacy document sandbox image
+backend/codemode/  Isolated JavaScript runner image
 frontend/          React/TypeScript application
 docs/              User, architecture, and operations documentation
 .env.example       Safe configuration template

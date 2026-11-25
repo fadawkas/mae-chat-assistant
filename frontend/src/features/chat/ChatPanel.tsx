@@ -1,250 +1,213 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { streamChat } from '../../api/sse';
-import { fetchConversation } from '../../api/conversations';
-import type { ChatMessage } from '../../types';
+import { fetchChatRun, issueBrowserGrant, newChatRunId, stopChatRun, submitChat, type ChatRun } from '../../api/chat';
+import { createConversation, fetchConversation } from '../../api/conversations';
+import type { DocumentArtifact } from '../../types';
 import { MaeLogo } from '../../components/common/MaeLogo';
 import { markdownComponents } from '../../components/common/CodeBlock';
-import { useModels } from '../../hooks/useModels';
+import { useChatSpeech } from './useChatSpeech';
+
+const promptStarters = [
+  { label: 'Draft a summary', prompt: 'Help me summarize the following notes:\n\n', icon: 'M5 5h14M5 10h14M5 15h14M5 20h8' },
+  { label: 'Run a calculation', prompt: 'Help me calculate ', icon: 'M4 7h6M7 4v6m7-3h6M5 15l4 4m0-4-4 4m9-3h6m-6 4h6' },
+  { label: 'Create a document', prompt: 'Create a document about ', icon: 'M13 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9m-6-6 6 6m-6-6v6h6M9 13h6m-6 4h4' },
+];
 
 type Status =
   | { type: 'idle' }
-  | { type: 'streaming' }
+  | { type: 'streaming'; message?: string }
   | { type: 'error'; message: string };
 
 interface ChatPanelProps {
-  conversationId: string;
-  model: string;
-  onModelChange: (m: string) => void;
+  conversationId: string | null;
+  onConversationCreated: (id: string) => void;
   onTitleChange?: () => void;
+  onArtifactCreated: () => void;
 }
 
 /** Models one displayed turn — a user message followed by the assistant reply. */
 interface Turn {
+  id: string;
   user: string;
   assistant: string;
+  complete?: boolean;
+  artifacts?: DocumentArtifact[];
 }
 
-
-/** Inline model selector pill — opens a dropdown upward above the input bar */
-function ModelSelector({ model, onModelChange }: { model: string; onModelChange: (m: string) => void }) {
-  const models = useModels();
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [highlighted, setHighlighted] = useState(0);
-  const ref = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  const filteredModels = models
-    .map((m) => {
-      const needle = query.trim().toLowerCase();
-      if (!needle) return { model: m, score: 0 };
-      const haystack = `${m.name} ${m.id}`.toLowerCase();
-      if (haystack.startsWith(needle)) return { model: m, score: 1 };
-      if (haystack.includes(needle)) return { model: m, score: 2 };
-      let position = 0;
-      for (const character of needle) {
-        position = haystack.indexOf(character, position);
-        if (position === -1) return { model: m, score: 99 };
-        position += 1;
-      }
-      return { model: m, score: 3 };
-    })
-    .filter(({ score }) => score < 99)
-    .sort((a, b) => a.score - b.score || a.model.name.localeCompare(b.model.name));
-
+export function ChatPanel({ conversationId, onConversationCreated, onTitleChange, onArtifactCreated }: ChatPanelProps) {
+  const [initialId] = useState(conversationId);
+  const savedId = useRef(initialId);
+  const mounted = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    searchRef.current?.focus();
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  useEffect(() => {
-    setHighlighted(0);
-  }, [query]);
-
-  const selectModel = (id: string) => {
-    onModelChange(id);
-    setOpen(false);
-    setQuery('');
-  };
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => { setOpen(v => !v); setQuery(''); }}
-        className="flex items-center gap-1.5 text-sidebar-meta text-mae-muted hover:text-mae-text transition-colors cursor-pointer px-2 py-1 rounded-[6px] hover:bg-mae-bubble-assistant focus-visible:outline-2 focus-visible:outline-mae-accent focus-visible:outline-offset-1 border-none bg-transparent"
-      >
-        <span>{model.replace(/^.*\//, '')}</span>
-        <svg className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 12 12" fill="none">
-          <path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="absolute bottom-full mb-1.5 left-0 w-[min(320px,calc(100vw-3rem))] max-h-[min(60vh,26rem)] overflow-hidden bg-mae-surface border border-mae-border rounded-[10px] shadow-lg z-50">
-          <div className="border-b border-mae-border p-2">
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Escape') setOpen(false);
-                if (event.key === 'ArrowDown' && filteredModels.length) { event.preventDefault(); setHighlighted(value => Math.min(value + 1, filteredModels.length - 1)); }
-                if (event.key === 'ArrowUp' && filteredModels.length) { event.preventDefault(); setHighlighted(value => Math.max(value - 1, 0)); }
-                if (event.key === 'Enter' && filteredModels[highlighted]) { event.preventDefault(); selectModel(filteredModels[highlighted].model.id); }
-              }}
-              placeholder="Search models..."
-              aria-label="Search models"
-              className="w-full rounded-md border border-mae-border bg-mae-bg px-2.5 py-2 text-sm text-mae-text outline-none placeholder:text-mae-muted focus:border-mae-accent"
-            />
-          </div>
-          <div className="max-h-[calc(min(60vh,26rem)-4.25rem)] overflow-y-auto overscroll-contain py-1">
-          {filteredModels.length === 0 && <p className="px-3 py-5 text-center text-sm text-mae-muted">No matching models</p>}
-          {filteredModels.map(({ model: m }, index) => {
-            const isSelected = m.id === model;
-            return (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => selectModel(m.id)}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-sidebar-title text-left transition-colors hover:bg-mae-bubble-assistant focus-visible:outline-2 focus-visible:outline-mae-accent focus-visible:outline-offset-[-2px] ${
-                  index === highlighted ? 'bg-mae-bubble-assistant' : ''
-                } ${
-                  isSelected ? 'text-mae-text' : 'text-mae-muted'
-                }`}
-              >
-                {isSelected && (
-                  <span className="w-[6px] h-[6px] rounded-full bg-mae-accent shrink-0" />
-                )}
-                {!isSelected && (
-                  <span className="w-[6px] h-[6px] shrink-0" />
-                )}
-                <div className="flex flex-col">
-                   <span>{m.name}</span>
-                   <span className="text-sidebar-meta text-mae-muted">{m.id}</span>
-                </div>
-              </button>
-            );
-          })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function ChatPanel({ conversationId, model, onModelChange, onTitleChange }: ChatPanelProps) {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [input, setInput] = useState('');
+  const speech = useChatSpeech(text => setInput(draft =>
+    (draft + (draft && !/\s$/.test(draft) ? ' ' : '') + text).slice(0, 100_000)));
   const [turns, setTurns] = useState<Turn[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(Boolean(initialId));
   const [status, setStatus] = useState<Status>({ type: 'idle' });
 
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const inputRef = useRef('');
   inputRef.current = input;
   const statusRef = useRef(status);
   statusRef.current = status;
-  const turnsRef = useRef<Turn[]>([]);
-  turnsRef.current = turns;
+  const [runId, setRunId] = useState<string>();
+  const pending = useRef<{ id: string; content: string; browser: boolean }>();
+  const [useBrowserTab, setUseBrowserTab] = useState(false);
+  const [browserState, setBrowserState] = useState<ChatRun['browser_state']>(null);
+  const [browserGrant, setBrowserGrant] = useState('');
+  const [grantError, setGrantError] = useState('');
+  const [issuingGrant, setIssuingGrant] = useState(false);
+  const artifactNames = useRef(new Set<string>());
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputContainerRef = useRef<HTMLDivElement>(null);
+  const transcript = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+  useLayoutEffect(() => {
+    const area = transcript.current;
+    if (area && followLatest.current) area.scrollTop = area.scrollHeight;
+  }, [turns, status]);
 
-  // Auto-scroll when new tokens arrive
+  const applySnapshot = useCallback((run: ChatRun) => {
+    const area = transcript.current;
+    if (area) followLatest.current = area.scrollHeight - area.scrollTop - area.clientHeight < 96;
+    const turn = { id: run.user_message_id, user: run.user_content, assistant: run.content, complete: run.status === 'done', artifacts: run.artifacts };
+    setTurns(previous => previous.some(item => item.id === turn.id)
+      ? previous.map(item => item.id === turn.id ? turn : item)
+      : [...previous, turn]);
+    setBrowserState(run.browser_state);
+    if (run.browser_state !== 'waiting') setBrowserGrant('');
+    const newArtifacts = run.artifacts.filter(file => !artifactNames.current.has(file.filename));
+    if (newArtifacts.length) {
+      newArtifacts.forEach(file => artifactNames.current.add(file.filename));
+      onArtifactCreated();
+    }
+    if (run.status === 'queued' || run.status === 'in_progress') {
+      setStatus({ type: 'streaming', message: run.progress ?? (run.status === 'queued' ? 'Queued…' : 'Working…') });
+      return true;
+    }
+    setStatus(run.error ? { type: 'error', message: run.error } : { type: 'idle' });
+    return false;
+  }, [onArtifactCreated]);
+
+  // A different selected conversation mounts a new panel. A newly saved draft does not.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [turns]);
-
-  // Fetch conversation history when conversationId changes.
-  useEffect(() => {
-    let cancelled = false;
+    if (!initialId) return;
+    const controller = new AbortController();
     (async () => {
-      setStatus({ type: 'idle' });
       try {
-        const detail = await fetchConversation(conversationId);
-        if (cancelled) return;
+        const detail = await fetchConversation(initialId);
+        if (controller.signal.aborted) return;
         const loaded: Turn[] = [];
         for (const msg of detail.messages) {
-          if (msg.role === 'user') {
-            loaded.push({ user: msg.content, assistant: '' });
-          } else if (msg.role === 'assistant' && loaded.length > 0) {
+          if (msg.role === 'user') loaded.push({ id: msg.id, user: msg.content, assistant: '' });
+          else if (msg.role === 'assistant' && loaded.length) {
             loaded[loaded.length - 1].assistant = msg.content;
+            loaded[loaded.length - 1].complete = Boolean(msg.content) && (!msg.run_status || msg.run_status === 'done');
+            loaded[loaded.length - 1].artifacts = msg.artifacts;
+            msg.artifacts?.forEach(file => artifactNames.current.add(file.filename));
           }
         }
         setTurns(loaded);
+        const run = await fetchChatRun(initialId, undefined, controller.signal);
+        if (!controller.signal.aborted && run && applySnapshot(run)) setRunId(run.id);
       } catch {
-        if (!cancelled) {
-          setTurns([]);
-        }
+        if (!controller.signal.aborted) setStatus({ type: 'error', message: 'Could not restore this conversation. Reopen it to retry.' });
+      } finally {
+        if (!controller.signal.aborted) setHistoryLoading(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [conversationId]);
+    return () => controller.abort();
+  }, [initialId, applySnapshot]);
 
-  // Build the linear message array from turns + new text.
-  const buildMessages = useCallback((newUserText: string): ChatMessage[] => {
-    const msgs: ChatMessage[] = [];
-    for (const t of turnsRef.current) {
-      msgs.push({ role: 'user' as const, content: t.user });
-      if (t.assistant) {
-        msgs.push({ role: 'assistant' as const, content: t.assistant });
+  useEffect(() => {
+    const id = savedId.current;
+    if (!runId || !id) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const run = await fetchChatRun(id, runId, controller.signal);
+        if (controller.signal.aborted) return;
+        if (!run || !applySnapshot(run)) {
+          if (!run) setStatus({ type: 'error', message: 'Chat run no longer exists.' });
+          setRunId(undefined);
+          onTitleChange?.();
+          return;
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        setStatus({ type: 'streaming', message: 'Connection lost. Reconnecting to the run…' });
       }
-    }
-    msgs.push({ role: 'user' as const, content: newUserText });
-    return msgs;
-  }, []);
+      timer = setTimeout(poll, 700);
+    };
+    void poll();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [runId, applySnapshot, onTitleChange]);
 
   const handleSend = useCallback(async () => {
     const trimmed = inputRef.current.trim();
-    if (!trimmed || statusRef.current.type === 'streaming') return;
-
-    setTurns((prev) => [...prev, { user: trimmed, assistant: '' }]);
-    setInput('');
-    setStatus({ type: 'streaming' });
-
-    const gen = streamChat({
-      model,
-      messages: buildMessages(trimmed),
-      conversation_id: conversationId,
-    });
-
-    let assistantContent = '';
-
+    if (!trimmed || historyLoading || speech.listening || statusRef.current.type === 'streaming') return;
+    statusRef.current = { type: 'streaming', message: 'Starting…' };
+    setStatus(statusRef.current);
     try {
-      for await (const event of gen) {
-        switch (event.type) {
-          case 'token':
-            assistantContent += event.text;
-            setTurns((prev) => {
-              const updated = [...prev];
-              if (updated.length > 0) {
-                updated[updated.length - 1] = {
-                  ...updated[updated.length - 1],
-                  assistant: assistantContent,
-                };
-              }
-              return updated;
-            });
-            break;
-          case 'done':
-            setStatus({ type: 'idle' });
-            onTitleChange?.();
-            break;
-          case 'error':
-            setStatus({ type: 'error', message: event.message });
-            break;
-        }
+      if (!savedId.current) {
+        const conversation = await createConversation();
+        if (!mounted.current) { onTitleChange?.(); return; }
+        savedId.current = conversation.id;
+        onConversationCreated(conversation.id);
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setStatus({ type: 'error', message: msg });
+      if (pending.current?.content !== trimmed || pending.current.browser !== useBrowserTab) {
+        pending.current = { id: newChatRunId(), content: trimmed, browser: useBrowserTab };
+      }
+      const accepted = pending.current.id;
+      await submitChat(savedId.current, accepted, trimmed, useBrowserTab);
+      if (!mounted.current) return;
+      followLatest.current = true;
+      pending.current = undefined;
+      setInput('');
+      setUseBrowserTab(false);
+      setGrantError('');
+      setStopError('');
+      setRunId(accepted);
+      onTitleChange?.();
+    } catch (error) {
+      if (mounted.current) setStatus({
+        type: 'error', message: error instanceof Error ? error.message : 'Could not start a chat run.',
+      });
     }
-  }, [model, conversationId, buildMessages, onTitleChange]);
+  }, [historyLoading, onConversationCreated, onTitleChange, speech.listening, useBrowserTab]);
+
+  const handleGrant = async () => {
+    if (!runId || issuingGrant) return;
+    setGrantError('');
+    setIssuingGrant(true);
+    try {
+      setBrowserGrant((await issueBrowserGrant(runId)).code);
+    } catch (error) {
+      setGrantError(error instanceof Error ? error.message : 'Could not issue a browser grant.');
+    } finally {
+      setIssuingGrant(false);
+    }
+  };
+
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState('');
+  const handleStop = async () => {
+    if (!runId || stopping) return;
+    setStopping(true);
+    setStopError('');
+    try {
+      await stopChatRun(runId);
+    } catch (error) {
+      setStopError(error instanceof Error ? error.message : 'Could not stop the run.');
+    } finally {
+      setStopping(false);
+    }
+  };
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -254,30 +217,32 @@ export function ChatPanel({ conversationId, model, onModelChange, onTitleChange 
   };
 
   const isBusy = status.type === 'streaming';
-  const canSend = input.trim().length > 0 && !isBusy;
+  const canSend = input.trim().length > 0 && !isBusy && !historyLoading && !speech.listening;
+  const isEmpty = !historyLoading && !turns.length;
+  const showStarters = isEmpty && status.type === 'idle' && !input && !speech.listening;
 
   return (
-    <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+    <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${isEmpty ? 'overflow-y-auto pt-[clamp(2.5rem,calc(34dvh-8rem),9rem)] md:pt-[clamp(4rem,28dvh,17rem)]' : ''}`}>
       {/* Messages area */}
-      <div className="flex-1 min-w-0 min-h-0 overflow-y-auto scroll-smooth">
-        <div className="max-w-[820px] min-w-0 w-full mx-auto px-5 md:px-8 pt-8 pb-40 flex flex-col gap-8">
+      <div ref={transcript} className={`min-h-0 min-w-0 ${isEmpty ? 'shrink-0' : 'flex-1 overflow-y-auto'}`}>
+        <div className={`mx-auto flex w-full min-w-0 max-w-chat-col flex-col gap-8 px-4 sm:px-6 ${isEmpty ? 'pb-6' : 'py-6 sm:pt-10'}`}>
           {turns.length > 0 ? (
             turns.map((t, i) => (
-              <div key={i} className="flex flex-col gap-5 pb-7 border-b border-mae-border/40 last:border-none">
+              <div key={t.id} className="flex flex-col gap-5">
                 {/* User message — right-aligned bubble, plain text */}
-                <div className="flex flex-col max-w-[70%] md:max-w-[65%] self-end ml-auto">
-                  <div className="px-4 py-3 rounded-2xl rounded-br-md bg-mae-bubble-user border border-mae-border text-[15px] leading-6 text-mae-text whitespace-pre-wrap break-words">
+                <div className="flex flex-col max-w-[85%] sm:max-w-[75%] self-end ml-auto">
+                  <div className="whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-mae-bubble-user px-4 py-3 text-chat text-mae-text">
                     {t.user}
                   </div>
                 </div>
                 {/* Assistant message — no bubble, full-width, markdown rendered */}
                 {t.assistant && (
-                  <div className="flex min-w-0 flex-col animate-[message-in_0.18s_ease-out]">
+                  <div className="flex min-w-0 flex-col">
                     <div className="flex items-center gap-2 mb-3">
-                      <MaeLogo size={20} />
-                      <span className="text-sm font-medium text-mae-text">Mae</span>
+                      <MaeLogo size={24} />
+                      <span className="text-base font-semibold text-mae-text">Mae</span>
                     </div>
-                    <div className="assistant-message min-w-0 border-l border-mae-border pl-5">
+                    <div className="assistant-message min-w-0 break-words text-chat">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={markdownComponents}
@@ -285,10 +250,37 @@ export function ChatPanel({ conversationId, model, onModelChange, onTitleChange 
                         {t.assistant}
                       </ReactMarkdown>
                     </div>
+                    {t.complete && speech.canSpeak && (
+                      <button type="button" onClick={() => speech.read(t.id, t.assistant)} disabled={speech.listening}
+                        className="mt-2 min-h-10 self-start rounded-lg px-2 text-sm text-mae-muted hover:bg-mae-bubble-assistant disabled:opacity-50">
+                        {speech.reading === t.id ? 'Stop reading' : 'Read aloud'}
+                      </button>
+                    )}
                   </div>
                 )}
-                {/* Loading indicator while streaming */}
-                {!t.assistant && status.type === 'streaming' && i === turns.length - 1 && (
+                {!!t.artifacts?.length && (
+                  <ul aria-label="Generated files" className="flex flex-wrap gap-2">
+                    {t.artifacts.map(file => (
+                      <li key={file.filename} className="min-w-0 max-w-full">
+                        {['image/png', 'image/jpeg', 'image/webp'].includes(file.content_type) && (
+                          <img
+                            src={`${file.download_url}?inline=true`}
+                            alt={file.display_name}
+                            loading="lazy"
+                            className="mb-2 max-h-[65vh] max-w-full rounded-lg border border-mae-border object-contain"
+                          />
+                        )}
+                        <a href={file.download_url} download={file.download_name ?? true} className="block break-words rounded-lg border border-mae-border bg-mae-surface px-3 py-2 text-sm text-mae-accent hover:underline">
+                          Download {file.display_name}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {status.type === 'streaming' && status.message && i === turns.length - 1 && (
+                  <p role="status" className="text-sm text-mae-muted">{status.message}</p>
+                )}
+                {!t.assistant && status.type === 'streaming' && !status.message && i === turns.length - 1 && (
                   <div className="flex self-start items-center gap-[5px]">
                     <span className="w-2 h-2 rounded-full bg-mae-accent animate-typing-bounce" />
                     <span className="w-2 h-2 rounded-full bg-mae-accent animate-typing-bounce" style={{ animationDelay: '0.2s' }} />
@@ -297,18 +289,15 @@ export function ChatPanel({ conversationId, model, onModelChange, onTitleChange 
                 )}
               </div>
             ))
+          ) : historyLoading ? (
+            <p role="status" className="text-center text-sm text-mae-muted">Loading conversation…</p>
           ) : status.type === 'error' ? (
             <div className="flex items-start gap-3 px-4 py-3 rounded-[10px] bg-mae-error-bg border border-mae-error text-sidebar-meta text-mae-error">
               <span className="shrink-0 text-base leading-tight">⚠</span>
               <span>{status.message}</span>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 px-8 text-center min-h-[300px]">
-              <p className="text-chat font-medium text-mae-text">Ask Mae anything</p>
-              <p className="text-sidebar-meta text-mae-muted max-w-[240px]">
-                Type a message below and press Ctrl+Enter to send.
-              </p>
-            </div>
+            <h1 className="text-balance text-center text-[2.5rem] font-bold leading-tight tracking-[-0.04em] sm:text-[2.75rem] lg:text-[3.5rem]">What can I help with?</h1>
           )}
 
           {/* Error banner at the end if turns exist but error occurred */}
@@ -319,38 +308,101 @@ export function ChatPanel({ conversationId, model, onModelChange, onTitleChange 
             </div>
           )}
 
-          <div ref={messagesEndRef} />
         </div>
       </div>
 
-      {/* Input container — glass, unified, with model selector + send */}
-      <div className="max-w-chat-col min-w-0 w-full mx-auto px-6 pb-4 shrink-0">
-        <div
-          ref={inputContainerRef}
-            className="flex flex-col rounded-2xl border border-mae-border bg-mae-surface/95 shadow-[0_12px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl transition-colors focus-within:border-mae-accent/70"
-        >
+      <div className="mx-auto w-full min-w-0 max-w-chat-col shrink-0 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
+        {runId && isBusy && (
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-sm text-mae-muted">You can leave this chat while Mae works.</span>
+            <button type="button" onClick={handleStop} disabled={stopping}
+              className="min-h-10 rounded-lg border border-mae-border px-3 text-sm hover:bg-mae-bubble-assistant disabled:opacity-50">
+              {stopping ? 'Stopping…' : 'Stop'}
+            </button>
+          </div>
+        )}
+        {runId && browserState === 'waiting' && (
+          <div className="mb-2 space-y-2 rounded-lg border border-mae-border p-3 text-sm text-mae-muted">
+            <p>Open the Mae Browser Helper on a tab you own or have permission to use. Share only a table you’re comfortable sending to Mae and its model provider.</p>
+            {!browserGrant ? (
+              <button type="button" onClick={handleGrant} disabled={issuingGrant}
+                className="min-h-10 rounded-lg border border-mae-border px-3 text-mae-text">
+                {issuingGrant ? 'Creating code…' : 'Get browser grant code'}
+              </button>
+            ) : (
+              <label className="block">Paste this code into the helper
+                <input readOnly value={browserGrant} onFocus={event => event.currentTarget.select()}
+                  className="mt-1 w-full rounded border border-mae-border bg-mae-bg p-2 text-mae-text" />
+              </label>
+            )}
+            {grantError && <p role="alert">{grantError}</p>}
+          </div>
+        )}
+        {speech.notice && <p role="status" className="mb-2 text-sm text-mae-muted">{speech.notice}</p>}
+        {runId && stopError && <p role="alert" className="mb-2 text-sm text-mae-error">{stopError}</p>}
+        <div className="flex items-end gap-1 rounded-[2.125rem] border border-mae-border bg-mae-surface shadow-[0_5px_16px_-7px_rgb(18_31_56_/_0.25)] focus-within:border-mae-accent sm:gap-2">
           <textarea
+            ref={composerRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type a message… (Ctrl+Enter to send)"
-            disabled={isBusy}
-            rows={2}
-            className="w-full resize-none min-h-[56px] max-h-[180px] text-[15px] leading-6 px-4 pt-4 pb-2 bg-transparent text-mae-text placeholder:text-mae-muted/70 outline-none border-none disabled:opacity-50 font-sans"
+            placeholder="Ask Mae anything…"
+            aria-label="Message Mae"
+            maxLength={100_000}
+            disabled={isBusy || historyLoading}
+            rows={1}
+            className="block min-h-16 w-full min-w-0 max-h-[180px] resize-none rounded-[2.125rem] border-none bg-transparent py-[1.125rem] pl-4 text-base leading-7 text-mae-text placeholder:text-mae-muted focus-visible:outline-none disabled:opacity-50 sm:pl-6 sm:text-lg [field-sizing:content]"
           />
-          {/* Bottom row: model selector left, send button right */}
-          <div className="flex items-center justify-between px-3 pb-3">
-            <ModelSelector model={model} onModelChange={onModelChange} />
+          <div className="flex shrink-0 items-center gap-1 py-2 pr-2 sm:gap-2">
+            {speech.canDictate && (
+              <button type="button" onClick={speech.dictate} disabled={isBusy || historyLoading}
+                aria-label={speech.listening ? 'Stop dictation' : 'Dictate message'}
+                aria-pressed={speech.listening} aria-describedby="dictation-note"
+                className="grid size-11 place-items-center rounded-full text-mae-text hover:bg-mae-bubble-assistant aria-pressed:bg-mae-accent-soft disabled:opacity-50 sm:size-12">
+                <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <rect x="9" y="2" width="6" height="13" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-3 0h6" />
+                </svg>
+              </button>
+            )}
             <button
+              type="button"
               onClick={handleSend}
               disabled={!canSend}
               aria-label="Send message"
-              className="flex items-center justify-center w-8 h-8 rounded-[8px] border-none bg-mae-accent text-mae-accent-on text-sm cursor-pointer transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-mae-accent focus-visible:outline-offset-2 disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:opacity-35"
+              className="grid size-11 place-items-center rounded-full bg-mae-lime text-mae-text enabled:hover:brightness-95 disabled:cursor-not-allowed disabled:bg-mae-accent-soft disabled:text-mae-muted sm:size-12"
             >
-              <span className="inline-block leading-none">↑</span>
+              <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5m-6 6 6-6 6 6" /></svg>
             </button>
           </div>
         </div>
+        {!isBusy && (
+          <label className="mt-2 inline-flex min-h-11 items-center gap-2.5 rounded-xl px-2 text-sm font-medium text-mae-muted hover:bg-mae-bubble-assistant sm:px-3">
+            <input type="checkbox" className="size-4 shrink-0" checked={useBrowserTab} disabled={historyLoading}
+              onChange={event => setUseBrowserTab(event.target.checked)} />
+            Use a table from my browser
+          </label>
+        )}
+        {showStarters && (
+          <ul aria-label="Prompt starters" className="mt-1 space-y-0.5">
+            {promptStarters.map(({ label, prompt, icon }) => (
+              <li key={label}>
+                <button type="button" onClick={() => {
+                  setInput(prompt);
+                  composerRef.current?.focus();
+                }} className="flex min-h-11 items-center gap-3 rounded-xl px-2 text-left text-base font-medium text-mae-text hover:bg-mae-bubble-assistant sm:px-3">
+                  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon} /></svg>
+                  {label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p id="dictation-note" className="mt-2 px-2 text-sm leading-relaxed text-mae-muted sm:px-3">
+          {speech.canDictate
+            ? speech.listening ? 'Listening… Dictation may use your browser’s speech service.'
+              : 'Dictation may use your browser’s speech service. Review your draft before sending.'
+            : 'Dictation is not supported in this browser. You can still type.'}
+        </p>
       </div>
     </div>
   );

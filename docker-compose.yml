@@ -40,6 +40,9 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - default
+      - code_net
 
   mae-worker:
     build:
@@ -69,6 +72,21 @@ services:
     networks:
       - default
       - sandbox_net
+      - code_net
+
+  mae-code:
+    build:
+      context: ./backend/codemode
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 192m
+    cpus: 1.0
+    pids_limit: 32
+    networks:
+      - code_net
+    restart: unless-stopped
 
   mae-renderer:
     build:
@@ -138,4 +156,6 @@ volumes:
 
 networks:
   sandbox_net:
+    internal: true
+  code_net:
     internal: true

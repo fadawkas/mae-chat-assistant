@@ -25,22 +25,26 @@ export async function* streamChat(
   const decoder = new TextDecoder();
   let buf = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buf += decoder.decode(value, { stream: true });
+      buf += decoder.decode(value, { stream: true });
+      const frames = buf.split('\n\n');
+      buf = frames.pop()!;
 
-    const frames = buf.split('\n\n');
-    buf = frames.pop()!;
-
-    for (const frame of frames) {
-      if (!frame.startsWith('data: ')) continue;
-      try {
-        yield JSON.parse(frame.slice(6)) as SSEEvent;
-      } catch {
-        // skip unparseable frames
+      for (const frame of frames) {
+        if (!frame.startsWith('data: ')) continue;
+        try {
+          yield JSON.parse(frame.slice(6)) as SSEEvent;
+        } catch {
+          // skip unparseable frames
+        }
       }
     }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }

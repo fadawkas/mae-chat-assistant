@@ -6,7 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.core.database import get_db
-from app.models import Conversation
+from app.models import Conversation, DocumentArtifactRecord, Job
+from app.services.artifacts import describe_artifact
+from app.services.chat_runs import ACTIVE, conversation_runs
 from app.schemas import (
     ConversationCreateResponse,
     ConversationDetail,
@@ -64,11 +66,19 @@ async def rename_conversation(conversation_id: UUID, body: ConversationRenameReq
 @router.delete("/api/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(conversation_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)):
     """Delete a conversation and its messages (CASCADE)."""
-    result = await db.execute(select(Conversation).where(Conversation.id == conversation_id, Conversation.owner_id == user.id))
-    conv = result.scalar_one_or_none()
+    conv = await db.scalar(select(Conversation).where(
+        Conversation.id == conversation_id, Conversation.owner_id == user.id,
+    ).with_for_update(key_share=True))
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
-
+    runs = list(await db.scalars(conversation_runs(conversation_id, user.id).with_for_update()))
+    if any(run.status in ACTIVE for run in runs):
+        raise HTTPException(409, "Stop the active chat run before deleting this conversation")
+    for run in runs:
+        # Keep files in Artifacts without retaining a deleted transcript.
+        run.payload = {}
+        run.result = None
+        run.error = None
     await db.delete(conv)
     await db.commit()
 
@@ -85,6 +95,22 @@ async def get_conversation(conversation_id: UUID, db: AsyncSession = Depends(get
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
+    run_ids = {m.artifact_run_id for m in conv.messages if m.artifact_run_id}
+    artifacts_by_run = {}
+    status_by_run = {}
+    if run_ids:
+        status_by_run = dict((await db.execute(select(Job.id, Job.status).where(
+            Job.owner_id == user.id, Job.id.in_(run_ids), Job.type == "chat",
+        ))).all())
+        records = await db.scalars(
+            select(DocumentArtifactRecord).join(Job).where(
+                Job.owner_id == user.id, DocumentArtifactRecord.job_id.in_(run_ids),
+                DocumentArtifactRecord.role == "output",
+            ).order_by(DocumentArtifactRecord.created_at)
+        )
+        for record in records:
+            artifacts_by_run.setdefault(record.job_id, []).append(describe_artifact(record))
+
     return ConversationDetail(
         id=conv.id,
         title=conv.title,
@@ -96,6 +122,8 @@ async def get_conversation(conversation_id: UUID, db: AsyncSession = Depends(get
                 content=m.content,
                 model=m.model,
                 created_at=m.created_at,
+                artifacts=artifacts_by_run.get(m.artifact_run_id, []),
+                run_status=status_by_run.get(m.artifact_run_id),
             )
             for m in conv.messages
         ],

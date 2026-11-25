@@ -10,9 +10,14 @@ from app.services.openrouter import OpenRouterClient
 from app.models import Session
 from app.core.auth import COOKIE
 import hashlib
+import logging
+import re
 from datetime import datetime, timezone
 from app.core.rate_limit import check_rate_limit
 from app.api.router import api_router
+from app.api.routes.office import RedactOfficeTickets
+
+logging.getLogger("uvicorn.access").addFilter(RedactOfficeTickets())
 
 
 @asynccontextmanager
@@ -57,6 +62,11 @@ app = FastAPI(title="Mae API", version="0.1.0", lifespan=lifespan)
 @app.middleware("http")
 async def require_session(request, call_next):
     if request.url.path in {"/api/health", "/docs", "/openapi.json", "/redoc"}:
+        return await call_next(request)
+    if request.method in {"PUT", "DELETE"} and re.fullmatch(
+        r"/api/browser-grants/[0-9a-fA-F-]{36}", request.url.path,
+    ):
+        # This single-purpose input endpoint authenticates a one-run bearer grant.
         return await call_next(request)
     if request.url.path.startswith("/api/"):
         costly = request.url.path in {"/api/chat", "/api/council", "/api/research", "/api/documents"}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mae Browser Helper</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Share a table with Mae</h1>
+    <p>Only a selected visible table is sent. Do not share sensitive data. Mae may send the table to its model provider.</p>
+    <p id="address"></p>
+    <button id="settings" type="button">Set up Mae connection</button>
+    <label>One-run grant code<input id="code" type="password" autocomplete="off" spellcheck="false"></label>
+    <button id="inspect" type="button">List tables in this tab</button>
+    <label id="selection" hidden>Table<select id="tables"></select></label>
+    <p id="preview" hidden></p>
+    <div class="actions">
+      <button id="share" type="button" disabled>Share selected table</button>
+      <button id="revoke" type="button">Revoke run access</button>
+    </div>
+    <p id="status" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>

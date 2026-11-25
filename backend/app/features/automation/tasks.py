@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.database import async_session_factory
 from app.models import AutomationSchedule
-from app.workers.automation import dispatch_schedule
+from app.workers.automation import ScheduleDispatchError, dispatch_schedule
 
 logger = logging.getLogger("mae.automation")
 
@@ -25,4 +25,7 @@ async def automation_dispatcher(ctx: dict) -> None:
             except (ValueError, KeyError):
                 logger.warning("Ignoring invalid automation schedule %s", schedule.id)
         for schedule in due:
-            await dispatch_schedule(schedule.id, now)
+            try:
+                await dispatch_schedule(schedule.id, now)
+            except ScheduleDispatchError:
+                logger.exception("Could not queue routine %s", schedule.id)
